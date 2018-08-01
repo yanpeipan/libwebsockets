@@ -22,7 +22,7 @@
 
 #define RING_DEPTH 1024
 
-static int interrupted, rx_seen, test;
+static int interrupted;
 static struct lws *client_wsi;
 const char *vin = "0ebfb";
 
@@ -48,18 +48,18 @@ struct per_session_data {
 	struct lws_ring *ring;
 	struct lws_client_connect_info i;
 	struct lws *client_wsi;
+	uint32_t tail;
 };
 
 static int connect_client(struct per_session_data *vhd)
 {
 	vhd->i.context = vhd->context;
-	vhd->i.port = 7681;
+	vhd->i.port = 8082;
 	vhd->i.address = "localhost";
-	vhd->i.path = "/publisher";
+	vhd->i.path = "/vehicle";
 	vhd->i.host = vhd->i.address;
 	vhd->i.origin = vhd->i.address;
 	vhd->i.ssl_connection = 0;
-
 	vhd->i.protocol = "lws-minimal-broker";
 	vhd->i.pwsi = &vhd->client_wsi;
 
@@ -75,9 +75,12 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 
 	const struct msg *pmsg;
 	struct msg amsg;
+	int n, m, r = 0;
+	const char * loginMsg = get_vehicle_login_message(vin);
 
 	switch (reason) {
 		case LWS_CALLBACK_PROTOCOL_INIT:
+			lwsl_user("LWS_CALLBACK_PROTOCOL_INIT\n");
 			vhd = lws_protocol_vh_priv_zalloc(
 				lws_get_vhost(wsi),
 				lws_get_protocol(wsi),
@@ -85,61 +88,117 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 			);
 			if (!vhd)
 				return -1;
+			vhd->ring = lws_ring_create(sizeof(struct msg), 8, _destroy_message);
+			if (!vhd->ring) {
+				lwsl_err("!ring");
+				return 1;
+			}
 
 			vhd->context = lws_get_context(wsi);
 			vhd->vhost = lws_get_vhost(wsi);
 
 			if (connect_client(vhd)) {
-
+				lwsl_err("connect success\n");
 			} else {
-				lwsl_err("connect_client\n");
+				lwsl_err("connect fail\n");
 			}
 
-	case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-		lwsl_err("CLIENT_CONNECTION_ERROR: %s\n",
-			 in ? (char *)in : "(null)");
-		client_wsi = NULL;
-		break;
-	case LWS_CALLBACK_CLIENT_ESTABLISHED:
-		vhd->ring = lws_ring_create(sizeof(struct msg), RING_DEPTH, _destroy_message);
-		lwsl_user("%s: established\n", __func__);
-		if (!vhd->ring)
-			return 1;
+			lws_callback_vhost_protocols(wsi, LWS_CALLBACK_USER, in, len);
+			break;
+		case LWS_CALLBACK_USER:
 
-		const char * loginMsg = get_vehicle_login_message(vin);
-		amsg.len = sizeof(loginMsg);
-		/* notice we over-allocate by LWS_PRE */
-		amsg.payload = malloc(LWS_PRE + sizeof(loginMsg));
-		if (!amsg.payload) {
-			lwsl_user("OOM: dropping\n");
+			
+			break;
+		case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+			lwsl_err("CLIENT_CONNECTION_ERROR: %s\n",
+				in ? (char *)in : "(null)");
+			vhd->client_wsi = NULL;
+			break;
+
+		case LWS_CALLBACK_CLIENT_ESTABLISHED:
+			lwsl_user("LWS_CALLBACK_CLIENT_ESTABLISHED\n");
+			vhd->ring = lws_ring_create(sizeof(struct msg), RING_DEPTH, _destroy_message);
+			if (!vhd->ring)
+				return 1;
+			vhd->tail = 0;
+
+
+lwsl_user("dropping!\n");
+				n = (int)lws_ring_get_count_free_elements(vhd->ring);
+			if (!n) {
+				lwsl_user("dropping!\n");
+				break;
+			}
+
+			amsg.len = strlen(loginMsg);
+			/* notice we over-allocate by LWS_PRE */
+			amsg.payload = malloc(LWS_PRE + len);
+			if (!amsg.payload) {
+				lwsl_user("OOM: dropping\n");
+				break;
+			}
+
+			memcpy((char *)amsg.payload + LWS_PRE, (char *)loginMsg, amsg.len);
+			lwsl_user("amsg.payload %s! %s %zu\n", amsg.payload, loginMsg, amsg.len);
+
+			if (!lws_ring_insert(vhd->ring, &amsg, 1)) {
+				_destroy_message(&amsg);
+				lwsl_user("dropping!\n");
+				break;
+			}
+			lws_callback_on_writable(wsi);
+
+			if (n < 3)
+				lws_rx_flow_control(wsi, 0);
+
+			break;
+			
+		case LWS_CALLBACK_CLIENT_RECEIVE:
+			lwsl_user("LWS_CALLBACK_CLIENT_RECEIVE: %4d (rpp %5d, first %d, last %d, bin %d)\n",
+				(int)len, (int)lws_remaining_packet_payload(wsi),
+				lws_is_first_fragment(wsi),
+				lws_is_final_fragment(wsi),
+				lws_frame_is_binary(wsi));
+/* notice we over-allocate by LWS_PRE */
+			
+								
+			// lwsl_hexdump_notice(in, len);
+			break;
+
+		case LWS_CALLBACK_CLOSED:
+			lws_ring_destroy(vhd->ring);
+			vhd->client_wsi = NULL;
+			lws_cancel_service(lws_get_context(wsi));
+			break;
+
+		case LWS_CALLBACK_PROTOCOL_DESTROY:
+			lwsl_user("LWS_CALLBACK_PROTOCOL_DESTROY\n");
+			break;
+
+		case LWS_CALLBACK_CLIENT_WRITEABLE:
+			lwsl_user("LWS_CALLBACK_SERVER_WRITEABLE\n");
+			do {
+				pmsg = lws_ring_get_element(vhd->ring, &vhd->tail);
+				if (!pmsg) {
+					return 1;
+				}
+
+				m = lws_write(wsi, pmsg->payload + LWS_PRE, pmsg->len, LWS_WRITE_TEXT);
+				if (m < (int)pmsg->len) {
+					lwsl_err("ERROR %d writing to ws socket\n", m);
+					return -1;
+				}
+				// lws_ring_consume_single_tail(vhd->ring, &vhd->tail, 1);
+				lws_ring_consume(vhd->ring, &vhd->tail, NULL, 1);
+				lws_ring_update_oldest_tail(vhd->ring, *(&vhd->tail));
+
+			} while (lws_ring_get_element(vhd->ring, &vhd->tail) && !lws_send_pipe_choked(wsi));
+			break;
+
+		default:
+			lwsl_user("default: %d\n", reason);
 			break;
 		}
-
-		memcpy((char *)amsg.payload + LWS_PRE, loginMsg, amsg.len);
-		if (!lws_ring_insert(vhd->ring, &amsg, 1)) {
-			_destroy_message(&amsg);
-			lwsl_user("dropping!\n");
-			break;
-		}
-		lws_callback_on_writable(wsi);
-
-		break;
-
-	case LWS_CALLBACK_CLIENT_RECEIVE:
-		lwsl_user("RX: %s\n", (const char *)in);
-		Message *msg = decode((const char *)in);
-		lwsl_user("RX: %d\n", msg->cmd);
-		break;
-
-	case LWS_CALLBACK_CLOSED:
-		client_wsi = NULL;
-		break;
-	case LWS_CALLBACK_SERVER_WRITEABLE:
-		lwsl_user("LWS_CALLBACK_SERVER_WRITEABLE\n");
-		break;
-	default:
-		break;
-	}
 
 	return lws_callback_http_dummy(wsi, reason, user, in, len);
 }
@@ -150,6 +209,7 @@ static const struct lws_protocols protocols[] = {
 		callback_hailing,
 		sizeof(struct per_session_data),
 		1024,
+		0, NULL, 0
 	},
 	{ NULL, NULL, 0, 0 }
 };
@@ -162,24 +222,23 @@ static void sigint_handler(int sig)
 int main(int argc, const char **argv)
 {
 	struct lws_context_creation_info info;
-	struct lws_client_connect_info i;
 	struct lws_context *context;
 	const char *p;
 	int n = 0, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE
-		/* for LLL_ verbosity above NOTICE to be built into lws, lws
-		 * must have been configured with -DCMAKE_BUILD_TYPE=DEBUG
-		 * instead of =RELEASE */
-		/* | LLL_INFO */ /* | LLL_PARSER */ /* | LLL_HEADER */
-		/* | LLL_EXT */ /* | LLL_CLIENT */ /* | LLL_LATENCY */
-		/* | LLL_DEBUG */;
+			/* for LLL_ verbosity above NOTICE to be built into lws,
+			 * lws must have been configured and built with
+			 * -DCMAKE_BUILD_TYPE=DEBUG instead of =RELEASE */
+			/* | LLL_INFO */ /* | LLL_PARSER */ /* | LLL_HEADER */
+			/* | LLL_EXT */ /* | LLL_CLIENT */ /* | LLL_LATENCY */
+			/* | LLL_DEBUG */;
 
 	signal(SIGINT, sigint_handler);
 
 	lws_set_log_level(logs, NULL);
-	lwsl_user("WS Client %s \n", LWS_LIBRARY_VERSION);
+	lwsl_user("LWS minimal ws client tx\n");
+	lwsl_user("  Run minimal-ws-broker and browse to that\n");
 
 	memset(&info, 0, sizeof info); /* otherwise uninitialized garbage */
-	// info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
 	info.port = CONTEXT_PORT_NO_LISTEN; /* we do not run any server */
 	info.protocols = protocols;
 
@@ -189,12 +248,11 @@ int main(int argc, const char **argv)
 		return 1;
 	}
 
-	while (n >= 0 && client_wsi && !interrupted)
+	while (n >= 0 && !interrupted)
 		n = lws_service(context, 1000);
 
 	lws_context_destroy(context);
+	lwsl_user("Completed\n");
 
-	lwsl_user("Completed %s\n", rx_seen > 10 ? "OK" : "Failed");
-
-	return rx_seen > 10;
+	return 0;
 }

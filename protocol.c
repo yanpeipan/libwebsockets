@@ -39,7 +39,7 @@ const char* get_vehicle_login_message(const char *vin)
 {
     struct json_object *obj = json_object_new_array();
 
-    json_object_array_add(obj, json_object_new_int(CMD_VEHICLE_LOGIN));
+    json_object_array_add(obj, json_object_new_int(CMD_VEHICLE_ABOARD));
     json_object_array_add(obj, json_object_new_string(vin));
     
     return json_object_to_json_string(obj);

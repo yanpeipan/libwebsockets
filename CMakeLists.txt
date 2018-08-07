@@ -17,7 +17,8 @@ get_filename_component(
 
 add_executable(
     client
-		ws-client.c
+      ws-client.c
+      ws-protocol.c
 )
 
 target_link_libraries(

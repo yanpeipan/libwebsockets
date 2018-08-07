@@ -1,24 +1,14 @@
 /*
- * lws-minimal-ws-client
+ * ws-client
  *
- * Copyright (C) 2018 Andy Green <andy@warmcat.com>
- *
- * This file is made available under the Creative Commons CC0 1.0
- * Universal Public Domain Dedication.
- *
- * This demonstrates the a minimal ws client using lws.
- *
- * It connects to https://libwebsockets.org/ and makes a
- * wss connection to the dumb-increment protocol there.  While
- * connected, it prints the numbers it is being sent by
- * dumb-increment protocol.
+ * Copyright (C) 2018 yanpeipan <yanpeipan_82@qq.com>
  */
 
 #include <libwebsockets.h>
 #include <string.h>
 #include <signal.h>
 
-#include "protocol.c"
+#include "ws-protocol.h"
 
 #define RING_DEPTH 1024
 
@@ -47,6 +37,9 @@ struct per_session_data {
 	const struct lws_protocols *protocol;
 	struct lws_ring *ring;
 	struct lws_client_connect_info i;
+
+	int is_login;
+
 	struct lws *client_wsi;
 	uint32_t tail;
 };
@@ -54,16 +47,54 @@ struct per_session_data {
 static int connect_client(struct per_session_data *vhd)
 {
 	vhd->i.context = vhd->context;
-	vhd->i.port = 8082;
-	vhd->i.address = "localhost";
+	vhd->i.port = 443;
+	vhd->i.address = "ht.wxapp.higoauto.com";
 	vhd->i.path = "/vehicle";
 	vhd->i.host = vhd->i.address;
 	vhd->i.origin = vhd->i.address;
-	vhd->i.ssl_connection = 0;
-	vhd->i.protocol = "lws-minimal-broker";
+	vhd->i.ssl_connection = LCCSCF_USE_SSL;
+	// vhd->i.protocol = "lws-minimal-broker";
 	vhd->i.pwsi = &vhd->client_wsi;
 
+	lwsl_user("connecting to %s:%d%s\n", vhd->i.address, vhd->i.port, vhd->i.path);
+
 	return !lws_client_connect_via_info(&vhd->i);
+}
+
+static int insert_message(const char *msg, void * d)
+{
+	lwsl_user("insert_message %s\n", msg);
+	struct per_session_data *vhd = (struct per_session_data *)d;
+
+	int n = (int)lws_ring_get_count_free_elements(vhd->ring);
+	if (!n) {
+		lwsl_user("lws_ring_get_count_free_elements %d\n", n);
+		return -1;
+	}
+	struct msg amsg;
+
+	amsg.len = strlen(msg);
+			/* notice we over-allocate by LWS_PRE */
+	amsg.payload = malloc(LWS_PRE + amsg.len);
+	if (!amsg.payload) {
+		lwsl_user("OOM: dropping\n");
+		return -1;
+	}
+
+	memcpy((char *)amsg.payload + LWS_PRE, (char *)msg, amsg.len);
+
+	if (!lws_ring_insert(vhd->ring, &amsg, 1)) {
+		_destroy_message(&amsg);
+		lwsl_err("lws_ring_insert!\n");
+		return -1;
+	}
+
+	lws_callback_on_writable(vhd->client_wsi);
+
+	if (n < 3)
+		lws_rx_flow_control(vhd->client_wsi, 0);
+	
+	return 0;
 }
 
 static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len)
@@ -75,8 +106,8 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 
 	const struct msg *pmsg;
 	struct msg amsg;
-	int n, m, r = 0;
-	const char * loginMsg = get_vehicle_login_message(vin);
+	int n, m, r = 0, flags;
+	void *retval;
 
 	switch (reason) {
 		case LWS_CALLBACK_PROTOCOL_INIT:
@@ -98,17 +129,23 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 			vhd->vhost = lws_get_vhost(wsi);
 
 			if (connect_client(vhd)) {
-				lwsl_err("connect success\n");
+				lws_timed_callback_vh_protocol(vhd->vhost, vhd->protocol, LWS_CALLBACK_USER, 1);
 			} else {
 				lwsl_err("connect fail\n");
 			}
-
-			lws_callback_vhost_protocols(wsi, LWS_CALLBACK_USER, in, len);
 			break;
+
 		case LWS_CALLBACK_USER:
-
-			
+			lwsl_notice("%s: LWS_CALLBACK_USER\n", __func__);
+			if (connect_client(vhd))
+				lws_timed_callback_vh_protocol(
+					vhd->vhost,
+					vhd->protocol,
+					LWS_CALLBACK_USER,
+					1
+				);
 			break;
+
 		case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
 			lwsl_err("CLIENT_CONNECTION_ERROR: %s\n",
 				in ? (char *)in : "(null)");
@@ -122,47 +159,31 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 				return 1;
 			vhd->tail = 0;
 
-
-lwsl_user("dropping!\n");
-				n = (int)lws_ring_get_count_free_elements(vhd->ring);
-			if (!n) {
-				lwsl_user("dropping!\n");
-				break;
-			}
-
-			amsg.len = strlen(loginMsg);
-			/* notice we over-allocate by LWS_PRE */
-			amsg.payload = malloc(LWS_PRE + len);
-			if (!amsg.payload) {
-				lwsl_user("OOM: dropping\n");
-				break;
-			}
-
-			memcpy((char *)amsg.payload + LWS_PRE, (char *)loginMsg, amsg.len);
-			lwsl_user("amsg.payload %s! %s %zu\n", amsg.payload, loginMsg, amsg.len);
-
-			if (!lws_ring_insert(vhd->ring, &amsg, 1)) {
-				_destroy_message(&amsg);
-				lwsl_user("dropping!\n");
-				break;
-			}
-			lws_callback_on_writable(wsi);
-
-			if (n < 3)
-				lws_rx_flow_control(wsi, 0);
-
+			insert_message(get_login_msg(vin), vhd);
 			break;
 			
 		case LWS_CALLBACK_CLIENT_RECEIVE:
-			lwsl_user("LWS_CALLBACK_CLIENT_RECEIVE: %4d (rpp %5d, first %d, last %d, bin %d)\n",
-				(int)len, (int)lws_remaining_packet_payload(wsi),
-				lws_is_first_fragment(wsi),
-				lws_is_final_fragment(wsi),
-				lws_frame_is_binary(wsi));
-/* notice we over-allocate by LWS_PRE */
-			
-								
-			// lwsl_hexdump_notice(in, len);
+			lwsl_user("LWS_CALLBACK_CLIENT_RECEIVE: %s\n", in);
+			Message msg = parse_msg((char *) in);
+			if (msg->code != CODE_OK) {
+				lwsl_err("code: %d\n", msg->code);
+				return -1;
+			}
+			switch (msg->cmd) {
+				case CMD_VEHICLE_LOGIN:
+					insert_message(get_info_msg(40.046055,116.284325), vhd);
+					break;
+				case CMD_VEHICLE_HAILING:
+					lwsl_user("CMD_VEHICLE_HAILING: %f %f\n", ((Info)(msg->body))->lat, ((Info)(msg->body))->lng);
+					break;
+				case CMD_VEHICLE_ABOARD:
+					insert_message(get_hailing_end_msg(CODE_OK), vhd);
+					break;
+				case CMD_VEHICLE_PARKING:
+					insert_message(get_parking_end_msg(CODE_OK), vhd);
+					break;
+			}
+
 			break;
 
 		case LWS_CALLBACK_CLOSED:
@@ -171,8 +192,14 @@ lwsl_user("dropping!\n");
 			lws_cancel_service(lws_get_context(wsi));
 			break;
 
+		case LWS_CALLBACK_WSI_DESTROY:
+			lwsl_user("LWS_CALLBACK_WSI_DESTROY\n");
+			break;
+
 		case LWS_CALLBACK_PROTOCOL_DESTROY:
 			lwsl_user("LWS_CALLBACK_PROTOCOL_DESTROY\n");
+			if (vhd->ring)
+				lws_ring_destroy(vhd->ring);
 			break;
 
 		case LWS_CALLBACK_CLIENT_WRITEABLE:
@@ -180,24 +207,37 @@ lwsl_user("dropping!\n");
 			do {
 				pmsg = lws_ring_get_element(vhd->ring, &vhd->tail);
 				if (!pmsg) {
-					return 1;
+					// lwsl_user("!pmsg\n");
+					break;
 				}
-
 				m = lws_write(wsi, pmsg->payload + LWS_PRE, pmsg->len, LWS_WRITE_TEXT);
 				if (m < (int)pmsg->len) {
 					lwsl_err("ERROR %d writing to ws socket\n", m);
 					return -1;
 				}
 				// lws_ring_consume_single_tail(vhd->ring, &vhd->tail, 1);
-				lws_ring_consume(vhd->ring, &vhd->tail, NULL, 1);
-				lws_ring_update_oldest_tail(vhd->ring, *(&vhd->tail));
+				lws_ring_consume_single_tail(vhd->ring, &vhd->tail, 1);
 
-			} while (lws_ring_get_element(vhd->ring, &vhd->tail) && !lws_send_pipe_choked(wsi));
+				if (lws_ring_get_element(vhd->ring, &vhd->tail) ) {
+					break;
+				}
+				if (!lws_send_pipe_choked(wsi)) {
+					break;
+				}
+
+			} while (1);
+
+			/* more to do for us? */
+			if (lws_ring_get_element(vhd->ring, &vhd->tail))
+			/* come back as soon as we can write more */
+				lws_callback_on_writable(wsi);
+			if ((int)lws_ring_get_count_free_elements(vhd->ring) > RING_DEPTH - 5)
+				lws_rx_flow_control(wsi, 1);
 			break;
 
 		default:
-			lwsl_user("default: %d\n", reason);
 			break;
+
 		}
 
 	return lws_callback_http_dummy(wsi, reason, user, in, len);
@@ -235,12 +275,15 @@ int main(int argc, const char **argv)
 	signal(SIGINT, sigint_handler);
 
 	lws_set_log_level(logs, NULL);
-	lwsl_user("LWS minimal ws client tx\n");
-	lwsl_user("  Run minimal-ws-broker and browse to that\n");
+	lwsl_user("WebSocket Client\n");
+	lwsl_user("libwebsockets version: %s\n", LWS_LIBRARY_VERSION);
 
 	memset(&info, 0, sizeof info); /* otherwise uninitialized garbage */
+	info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
 	info.port = CONTEXT_PORT_NO_LISTEN; /* we do not run any server */
 	info.protocols = protocols;
+	// info.client_ssl_ca_filepath = "./214768363430417.pfx";
+	// info.ssl_private_key_password = "214768363430417";
 
 	context = lws_create_context(&info);
 	if (!context) {

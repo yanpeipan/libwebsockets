@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 2.8)
 SET(CMAKE_BUILD_TYPE "Debug")
 SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
+SET(CMAKE_CXX_FLAGS -pthread)
 
 find_package(PkgConfig)
 pkg_check_modules(LIB_WEBSOCKETS REQUIRED libwebsockets)
@@ -24,7 +25,9 @@ add_executable(
 target_link_libraries(
     client
       ${LIB_WEBSOCKETS_LIBRARIES}
-	  ${LIB_JSON_LIBRARIES}
+      ${LIB_JSON_LIBRARIES}
+      ${LIB_OPENSSL_LIBRARIES}
+      pthread
 )
 
 set_target_properties(
@@ -37,14 +40,13 @@ set_target_properties(
       COMPILE_DEFINITIONS
         INSTALL_DATADIR="${LIB_WEBSOCKETS_INSTALL_DIR}/share"
 )
-
-set_target_properties(
-    client
-    PROPERTIES
-      INCLUDE_DIRECTORIES
-        ${LIB_OPENSSL_INCLUDE_DIRS}
-      LINK_FLAGS
-        "-L${LIB_OPENSSL_LIBRARY_DIRS}"
-      COMPILE_DEFINITIONS
-        INSTALL_DATADIR="${LIB_OPENSSL_INSTALL_DIR}/share"
-)
+#set_target_properties(
+#    client
+#    PROPERTIES
+#      INCLUDE_DIRECTORIES
+#        ${LIB_OPENSSL_INCLUDE_DIRS}
+#      LINK_FLAGS
+#        "-L${LIB_OPENSSL_LIBRARY_DIRS}"
+#      COMPILE_DEFINITIONS
+#        INSTALL_DATADIR="${LIB_OPENSSL_INSTALL_DIR}/share"
+#)

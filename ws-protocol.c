@@ -14,36 +14,7 @@
 #include <stdio.h> 
 #include <json-c/json.h>
 
-typedef enum code {
-    CODE_OK = 0
-} CODE;
-
-typedef enum command {
-    CMD_PING = 0,
-    CMD_PONG = 1,
-    CMD_VEHICLE_LOGIN = 2,
-    CMD_VEHICLE_INFO = 3,
-    CMD_VEHICLE_LIST = 4,
-    CMD_USER_LOGIN = 5,
-    CMD_USER_INFO = 6,
-    CMD_VEHICLE_HAILING = 7,
-    CMD_VEHICLE_PARKING = 8,
-    CMD_VEHICLE_HAILING_END = 9,
-    CMD_VEHICLE_PARKING_END = 10,
-    CMD_VEHICLE_ABOARD = 11,
-    CMD_ADMIN_LOGIN = 20
-} Command;
-
-typedef struct message {
-    int cmd;
-    int code;
-    void *body;
-} *Message;
-
-typedef struct info {
-    double lat;
-    double lng;
-} *Info;
+#include "ws-protocol.h"
 
 const char *get_hailing_end_msg(int err)
 {
@@ -105,15 +76,14 @@ Message parse_msg(char *in) {
         case CMD_VEHICLE_HAILING:
             msg->code = 0;
             struct info i;
-
-            i.lat = json_object_get_double(json_object_array_get_idx(obj, 2));
-            i.lng = json_object_get_double(json_object_array_get_idx(obj, 3));
+            i.lat = json_object_get_double(json_object_array_get_idx(obj, 1));
+            i.lng = json_object_get_double(json_object_array_get_idx(obj, 2));
             msg->body = &i;
             break;
         case CMD_VEHICLE_PARKING:
             msg->code = 0;
             break;
-        case CMD_VEHICLE_ABOARD:
+        case CMD_USER_ABOARD:
             msg->code = 0;
             break;
         default :

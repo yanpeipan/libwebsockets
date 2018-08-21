@@ -35,6 +35,10 @@
         "libwebsockets.h": "c",
         "string.h": "c",
         "stdio.h": "c",
-        "lws_config.h": "c"
+        "lws_config.h": "c",
+        "__mutex_base": "c",
+        "mutex": "c",
+        "ws-protocol.h": "c",
+        "pthread.h": "c"
     }
 }

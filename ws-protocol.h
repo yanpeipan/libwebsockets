@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2018 yanpeipan <yanpeipan_82@qq.com>
  */
+
 typedef enum code {
     CODE_OK = 0
 } CODE;
@@ -19,7 +20,8 @@ typedef enum command {
     CMD_VEHICLE_PARKING = 8,
     CMD_VEHICLE_HAILING_END = 9,
     CMD_VEHICLE_PARKING_END = 10,
-    CMD_VEHICLE_ABOARD = 11,
+    CMD_USER_ABOARD = 11,
+    CMD_USER_GETOFF = 12,
     CMD_ADMIN_LOGIN = 20
 } Command;
 

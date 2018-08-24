@@ -15,7 +15,7 @@ make && sudo make install
 ```
 wget https://github.com/json-c/json-c/archive/json-c-0.13.1-20180305.tar.gz
 tar zxvf json-c-0.13.1-20180305.tar.gz
-cd json-c
+cd json-c-json-c-0.13.1-20180305/
 mkdir build
 cd build
 cmake ../

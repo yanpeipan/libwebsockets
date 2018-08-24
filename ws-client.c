@@ -107,7 +107,7 @@ static int connect_client(struct per_session_data *vhd)
 {
 	vhd->i.context = vhd->context;
 	vhd->i.port = 443;
-	vhd->i.address = "ht.wxapp.higoauto.com";
+	vhd->i.address = "test.com";
 	vhd->i.path = "/vehicle";
 	vhd->i.host = vhd->i.address;
 	vhd->i.origin = vhd->i.address;

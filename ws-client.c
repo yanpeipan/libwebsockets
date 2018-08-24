@@ -187,6 +187,7 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 	struct msg amsg;
 	int n, m, r = 0, flags;
 	void *retval;
+	Message msg;
 
 	switch (reason) {
 		case LWS_CALLBACK_PROTOCOL_INIT:
@@ -244,8 +245,8 @@ static int callback_hailing(struct lws *wsi, enum lws_callback_reasons reason, v
 			break;
 			
 		case LWS_CALLBACK_CLIENT_RECEIVE:
-			lwsl_user("LWS_CALLBACK_CLIENT_RECEIVE: %s\n", in);
-			Message msg = parse_msg((char *) in);
+			//lwsl_user("LWS_CALLBACK_CLIENT_RECEIVE: %s\n", in);
+			msg = parse_msg((char *) in);
 			if (msg->code != CODE_OK) {
 				lwsl_err("code: %d\n", msg->code);
 				return -1;
@@ -404,7 +405,7 @@ int main(int argc, const char **argv)
 	lwsl_user("libwebsockets version: %s\n", LWS_LIBRARY_VERSION);
 
 	memset(&info, 0, sizeof info); /* otherwise uninitialized garbage */
-	info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+	//info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
 	info.port = CONTEXT_PORT_NO_LISTEN; /* we do not run any server */
 	info.protocols = protocols;
 	// info.client_ssl_ca_filepath = "./214768363430417.pfx";

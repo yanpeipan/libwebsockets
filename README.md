@@ -1,5 +1,5 @@
-#depend
-libwebsockets
+# depend
+## libwebsockets
 
 ```
 git clone git@github.com:warmcat/libwebsockets.git
@@ -10,7 +10,7 @@ cmake ..
 make && sudo make install
 ```
 
-json-c
+## json-c
 
 ```
 wget https://github.com/json-c/json-c/archive/json-c-0.13.1-20180305.tar.gz
@@ -23,7 +23,7 @@ make
 sudo make install
 ```
 
-#install
+# install
 
 ```
 mkdir build && cd build
@@ -31,7 +31,7 @@ cmake ..
 make
 ```
 
-#run
+# run
 
 ```
 ./client
